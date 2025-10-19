@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>EEG Viewer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>EEG Channel Viewer</h1>
+        <p>Inspect the first three channels from motor imagery sessions.</p>
+      </header>
+      <section class="controls">
+        <label for="file-select">MAT file</label>
+        <select id="file-select">
+          {% if files %}
+            {% for file in files %}
+              <option value="{{ file }}">{{ file }}</option>
+            {% endfor %}
+          {% else %}
+            <option disabled selected>No .mat files found</option>
+          {% endif %}
+        </select>
+        <label for="segment-select">Segment</label>
+        <select id="segment-select">
+          <option disabled selected>Select a file first</option>
+        </select>
+        <button id="load-button" type="button">Load</button>
+        <p id="status" role="status"></p>
+      </section>
+      <section id="plot"></section>
+    </main>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>
