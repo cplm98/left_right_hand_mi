@@ -98,9 +98,11 @@ def downsample(channels: np.ndarray, max_points: int) -> Tuple[np.ndarray, np.nd
     return channels[:, indices], indices
 
 
-def load_channels(file_path: Path, segment: str | None = None, channel_count: int = 3) -> Dict[str, Iterable]:
-    """Load first `channel_count` channels from selected segment."""
-    print(f"[load_channels] file={file_path.name} requested_segment={segment}")
+def load_channels(
+    file_path: Path, segment: str | None = None, channel_count: int | None = None
+) -> Dict[str, Iterable]:
+    """Load channels from selected segment; default returns all available channels."""
+    print(f"[load_channels] file={file_path.name} requested_segment={segment} limit={channel_count}")
     mat = loadmat(file_path, squeeze_me=True, struct_as_record=False)
     data_dict = {
         key: value for key, value in mat.items() if not key.startswith("__")
@@ -138,10 +140,16 @@ def load_channels(file_path: Path, segment: str | None = None, channel_count: in
     if target_segment not in segments:
         raise ValueError(f"Segment '{target_segment}' not available.")
 
-    channels = segments[target_segment][:channel_count]
+    segment_matrix = segments[target_segment]
+    available_channels = segment_matrix.shape[0]
+    channels = segment_matrix
+    if channel_count is not None:
+        channels = segment_matrix[:channel_count]
+
+    channel_total = channels.shape[0]
     print(
         f"[load_channels] using_segment='{target_segment}' "
-        f"channels_shape={channels.shape}"
+        f"channels_shape={channels.shape} available_channels={available_channels}"
     )
 
     reduced, indices = downsample(channels, MAX_POINTS)
@@ -165,6 +173,8 @@ def load_channels(file_path: Path, segment: str | None = None, channel_count: in
         "segments": ordered_segments,
         "segment": target_segment,
         "sampleRate": sample_rate,
+        "channelCount": channel_total,
+        "availableChannels": available_channels,
         "time": time_axis,
         "channels": [
             {

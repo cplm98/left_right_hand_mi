@@ -31,7 +31,24 @@
         <button id="load-button" type="button">Load</button>
         <p id="status" role="status"></p>
       </section>
-      <section id="plot"></section>
+      <div class="viewer">
+        <section id="plot" aria-label="EEG plot">
+          <div class="plot-toolbar">
+            <button id="fullscreen" type="button" aria-label="Toggle fullscreen">Fullscreen</button>
+          </div>
+          <div id="plot-area" class="plot-area"></div>
+        </section>
+        <aside id="channel-legend" class="channel-legend" aria-label="Channels">
+          <div class="legend-header">
+            <h2>Channels</h2>
+            <div class="legend-actions">
+              <button id="select-all" type="button">Select all</button>
+              <button id="deselect-all" type="button">Deselect all</button>
+            </div>
+          </div>
+          <div id="legend-list" class="legend-list" role="listbox" aria-multiselectable="true"></div>
+        </aside>
+      </div>
     </main>
     <script src="{{ url_for('static', filename='app.js') }}"></script>
   </body>
