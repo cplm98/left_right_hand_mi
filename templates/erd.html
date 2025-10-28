@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>EEG ERD Explorer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Event-Related Desynchronization</h1>
+        <p>Inspect ERD across trials and frequency bands for movement and imagery sessions.</p>
+      </header>
+      <section class="controls erd-controls">
+        <label for="erd-file">MAT file</label>
+        <select id="erd-file">
+          {% for file in config["files"] %}
+            <option value="{{ file }}">{{ file }}</option>
+          {% endfor %}
+        </select>
+        <label for="erd-dataset">Condition</label>
+        <select id="erd-dataset">
+          {% for option in config["datasets"] %}
+            <option value="{{ option.value }}">{{ option.label }}</option>
+          {% endfor %}
+        </select>
+        <label for="erd-band">Band</label>
+        <select id="erd-band">
+          {% for band in config["bands"] %}
+            <option value="{{ band }}">{{ band.replace('_band', '').title() }}</option>
+          {% endfor %}
+        </select>
+        <div class="epoch-controls">
+          <button type="button" id="prev-epoch" aria-label="Previous epoch">←</button>
+          <input type="range" id="epoch-slider" min="1" max="1" value="1">
+          <button type="button" id="next-epoch" aria-label="Next epoch">→</button>
+          <span id="epoch-label">Trial 1 / 1</span>
+        </div>
+        <button id="erd-load" type="button">Load</button>
+        <p id="erd-status" role="status"></p>
+      </section>
+      <section id="erd-summary" class="erd-summary"></section>
+      <div class="erd-layout">
+        <div id="erd-plot" class="erd-plot" aria-label="ERD chart"></div>
+      </div>
+    </main>
+    <script>
+      window.ERD_CONFIG = {{ config | tojson }};
+    </script>
+    <script src="{{ url_for('static', filename='erd.js') }}"></script>
+  </body>
+</html>

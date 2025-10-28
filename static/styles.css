@@ -189,3 +189,55 @@ button:hover {
     order: 1;
   }
 }
+
+.erd-controls {
+  gap: 1rem;
+}
+
+.erd-controls #erd-status {
+  margin-left: auto;
+  font-style: italic;
+}
+
+.epoch-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.epoch-controls button {
+  background-color: #f7f7f7;
+  border: 1px solid #ccc;
+  border-radius: 0.4rem;
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
+}
+
+.epoch-controls button:hover {
+  background-color: #e9e9e9;
+}
+
+#epoch-slider {
+  width: 220px;
+}
+
+.erd-summary {
+  background-color: rgba(255, 255, 255, 0.9);
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.2rem;
+  color: #374151;
+}
+
+.erd-layout {
+  display: block;
+}
+
+.erd-plot {
+  background-color: white;
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+  padding: 0.75rem;
+  min-height: 520px;
+}
