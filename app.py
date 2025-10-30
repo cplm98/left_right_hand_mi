@@ -8,6 +8,7 @@ from flask import Flask, abort, jsonify, render_template, request
 from scipy.io import loadmat
 from scipy.interpolate import griddata
 from scipy.signal import welch
+from lib import apply_basic_filters
 
 APP_ROOT = Path(__file__).resolve().parent
 DATA_DIR = APP_ROOT / "Data"
@@ -43,6 +44,16 @@ ERD_DATASETS = {
         "trial_key": "n_imagery_trials",
     },
 }
+
+DEFAULT_FILTERS = {
+    "hp": 1.0,
+    "lp": 40.0,
+    "notch_base": 60.0,
+    "n_harmonics": 2,
+    "notch_q": 30.0,
+    "order": 4,
+}
+DEFAULT_BASELINE_SAMPLES = 1000
 
 app = Flask(__name__)
 
@@ -348,11 +359,39 @@ def compute_topomap_grid(
     }
 
 
+def parse_optional_float_arg(name: str) -> float | None:
+    raw = request.args.get(name)
+    if raw is None:
+        return None
+    raw = raw.strip()
+    if raw == "":
+        return None
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid float for {name!r}") from exc
+
+
+def parse_optional_int_arg(name: str) -> int | None:
+    raw = request.args.get(name)
+    if raw is None:
+        return None
+    raw = raw.strip()
+    if raw == "":
+        return None
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid integer for {name!r}") from exc
+
+
 def compute_epoch_erd(
     file_path: Path,
     dataset_key: str,
     epoch_index: int,
     band_name: str,
+    filter_options: Dict[str, float] | None = None,
+    baseline_samples: int = 1000,
 ) -> Dict[str, object]:
     """Compute ERD for a given epoch, dataset, and band."""
     if dataset_key not in ERD_DATASETS:
@@ -373,10 +412,10 @@ def compute_epoch_erd(
 
     eeg_channels = data_matrix[:64, :]
 
-    fs = eeg_data.get("srate")
-    if not isinstance(fs, (int, np.integer)):
+    fs_value = eeg_data.get("srate")
+    if not isinstance(fs_value, (int, np.integer)):
         raise ValueError("Sample rate 'srate' missing or invalid.")
-    fs = int(fs)
+    fs = int(fs_value)
 
     trial_count_raw = eeg_data.get(cfg["trial_key"])
     if not isinstance(trial_count_raw, (int, np.integer)):
@@ -390,7 +429,46 @@ def compute_epoch_erd(
     if samples_per_trial * trial_count != total_samples:
         raise ValueError("Samples do not divide evenly into trials.")
 
-    epochs = eeg_channels.reshape(64, samples_per_trial, trial_count, order="F")
+    filter_opts = filter_options or {}
+    hp_val = filter_opts.get("hp", DEFAULT_FILTERS["hp"])
+    lp_val = filter_opts.get("lp", DEFAULT_FILTERS["lp"])
+    notch_base = filter_opts.get("notch_base", DEFAULT_FILTERS["notch_base"])
+    n_harmonics = filter_opts.get("n_harmonics", DEFAULT_FILTERS["n_harmonics"])
+    notch_q = filter_opts.get("notch_q", DEFAULT_FILTERS["notch_q"])
+    filter_order = max(1, int(filter_opts.get("order", DEFAULT_FILTERS["order"])))
+
+    nyquist = fs / 2.0
+    hp_cutoff = hp_val if hp_val and 0 < hp_val < nyquist else None
+    lp_cutoff = lp_val if lp_val and 0 < lp_val < nyquist else None
+    if hp_cutoff is not None and lp_cutoff is not None and lp_cutoff <= hp_cutoff:
+        raise ValueError("Low-pass cutoff must be greater than high-pass cutoff.")
+
+    notch_base_val = notch_base if notch_base and 0 < notch_base < nyquist else None
+    notch_q_val = notch_q if notch_q and notch_q > 0 else 30.0
+    n_harmonics_val = int(n_harmonics) if n_harmonics is not None else 0
+    n_harmonics_val = max(0, n_harmonics_val)
+
+    filters_used = {
+        "hp": hp_cutoff,
+        "lp": lp_cutoff,
+        "notchBase": notch_base_val,
+        "notchHarmonics": n_harmonics_val,
+        "notchQ": notch_q_val if notch_base_val else None,
+        "order": filter_order,
+    }
+
+    eeg_filtered = apply_basic_filters(
+        eeg_channels,
+        fs,
+        hp=hp_cutoff,
+        lp=lp_cutoff,
+        notch_base=notch_base_val,
+        n_harm=n_harmonics_val,
+        q=notch_q_val,
+        order=filter_order,
+    )
+
+    epochs = eeg_filtered.reshape(64, samples_per_trial, trial_count, order="F")
     print(
         "[compute_epoch_erd] epochs shape",
         epochs.shape,
@@ -413,52 +491,68 @@ def compute_epoch_erd(
 
     movement_indices = np.where(epoch_events > 0)[0]
     if movement_indices.size:
-        start = int(movement_indices[0])
-        end = int(movement_indices[-1]) + 1
+        active_start = int(movement_indices[0])
+        active_end = int(movement_indices[-1]) + 1
     else:
-        start = samples_per_trial // 2
-        end = samples_per_trial
+        active_start = samples_per_trial // 2
+        active_end = min(samples_per_trial, active_start + fs)
 
-    start = max(1, min(start, samples_per_trial - 2))
-    end = max(start + 1, min(end, samples_per_trial))
+    active_start = max(1, min(active_start, samples_per_trial - 2))
+    active_end = max(active_start + 1, min(active_end, samples_per_trial))
 
-    before_signal = epoch_signal[:, :start]
-    during_signal = epoch_signal[:, start:end]
+    baseline_len_request = int(max(1, baseline_samples))
+    baseline_start = max(0, active_start - baseline_len_request)
+    baseline_end = active_start
 
-    if before_signal.shape[1] < max(8, fs // 4):
-        before_signal = epoch_signal[:, :max(start, min(samples_per_trial, fs))]
-    if during_signal.shape[1] < max(8, fs // 4):
-        during_signal = epoch_signal[:, start:]
+    baseline_signal = epoch_signal[:, baseline_start:baseline_end]
+    if baseline_signal.shape[1] < max(8, fs // 4):
+        baseline_start = max(0, baseline_end - max(fs // 2, baseline_len_request))
+        baseline_signal = epoch_signal[:, baseline_start:baseline_end]
+    if baseline_signal.shape[1] == 0:
+        baseline_start = 0
+        baseline_end = min(active_start, max(1, baseline_len_request))
+        baseline_signal = epoch_signal[:, baseline_start:baseline_end]
+
+    active_signal = epoch_signal[:, active_start:active_end]
+    if active_signal.shape[1] < max(8, fs // 4):
+        active_end = min(samples_per_trial, active_start + max(fs // 2, active_end - active_start))
+        active_signal = epoch_signal[:, active_start:active_end]
+    if active_signal.shape[1] == 0:
+        active_end = min(samples_per_trial, active_start + max(fs // 2, 1))
+        active_signal = epoch_signal[:, active_start:active_end]
+
+    baseline_samples_actual = baseline_signal.shape[1]
+    active_samples_actual = active_signal.shape[1]
 
     channels: List[Dict[str, object]] = []
     erd_values: List[float] = []
 
     for idx in range(epoch_signal.shape[0]):
-        ch_before = before_signal[idx]
-        ch_during = during_signal[idx]
+        ch_baseline = baseline_signal[idx]
+        ch_active = active_signal[idx]
 
-        before_powers = compute_bandpowers(ch_before, fs)
-        during_powers = compute_bandpowers(ch_during, fs)
+        baseline_powers = compute_bandpowers(ch_baseline, fs)
+        active_powers = compute_bandpowers(ch_active, fs)
 
-        before_val = before_powers.get(band_name)
-        during_val = during_powers.get(band_name)
+        baseline_val = baseline_powers.get(band_name)
+        active_val = active_powers.get(band_name)
         erd_val: float | None = None
         if (
-            before_val is not None
-            and during_val is not None
-            and np.isfinite(before_val)
-            and np.isfinite(during_val)
+            baseline_val is not None
+            and active_val is not None
+            and np.isfinite(baseline_val)
+            and np.isfinite(active_val)
         ):
-            denom = before_val if abs(before_val) > 1e-12 else np.sign(before_val) * 1e-12 or 1e-12
-            erd_val = float((during_val - before_val) / denom)
+            denom = baseline_val if abs(baseline_val) > 1e-12 else np.sign(baseline_val) * 1e-12 or 1e-12
+            erd_val = float((active_val - baseline_val) / denom)
         if erd_val is not None and np.isfinite(erd_val):
             erd_values.append(erd_val)
 
         channels.append(
             {
                 "index": idx + 1,
-                "before": {k: sanitize_number(v) for k, v in before_powers.items()},
-                "during": {k: sanitize_number(v) for k, v in during_powers.items()},
+                "baseline": {k: sanitize_number(v) for k, v in baseline_powers.items()},
+                "active": {k: sanitize_number(v) for k, v in active_powers.items()},
                 "erd": sanitize_number(erd_val),
             }
         )
@@ -522,8 +616,27 @@ def compute_epoch_erd(
         f"epoch={epoch_index + 1}/{trial_count}",
         f"band={band_name}",
         f"finite_channels={len(erd_values)}",
+        f"baseline_samples={baseline_samples_actual}",
+        f"active_samples={active_samples_actual}",
         f"topomap={'yes' if topomap_payload else 'no'}",
     )
+
+    windows = {
+        "baseline": {
+            "startSample": baseline_start,
+            "endSample": baseline_end,
+            "samples": baseline_samples_actual,
+            "startTime": baseline_start / fs,
+            "endTime": baseline_end / fs,
+        },
+        "active": {
+            "startSample": active_start,
+            "endSample": active_end,
+            "samples": active_samples_actual,
+            "startTime": active_start / fs,
+            "endTime": active_end / fs,
+        },
+    }
 
     return {
         "file": file_path.name,
@@ -533,12 +646,12 @@ def compute_epoch_erd(
         "epochCount": trial_count,
         "sampleRate": fs,
         "samplesPerTrial": samples_per_trial,
-        "movementWindow": {
-            "startSample": start,
-            "endSample": end,
-            "startTime": start / fs,
-            "endTime": end / fs,
+        "windows": windows,
+        "baseline": {
+            "samples": baseline_samples_actual,
+            "seconds": baseline_samples_actual / fs,
         },
+        "filters": filters_used,
         "channels": channels,
         "erdRange": erd_range,
         "positions": positions_payload,
@@ -559,7 +672,21 @@ def erd():
         {"value": key, "label": cfg["label"]} for key, cfg in ERD_DATASETS.items()
     ]
     band_options = list(BAND_DEFINITIONS.keys())
-    config = {"files": files, "datasets": dataset_options, "bands": band_options}
+    filter_defaults = {
+        "hp": DEFAULT_FILTERS["hp"],
+        "lp": DEFAULT_FILTERS["lp"],
+        "notchBase": DEFAULT_FILTERS["notch_base"],
+        "notchHarmonics": DEFAULT_FILTERS["n_harmonics"],
+        "notchQ": DEFAULT_FILTERS["notch_q"],
+        "order": DEFAULT_FILTERS["order"],
+        "baselineSamples": DEFAULT_BASELINE_SAMPLES,
+    }
+    config = {
+        "files": files,
+        "datasets": dataset_options,
+        "bands": band_options,
+        "filters": filter_defaults,
+    }
     return render_template("erd.html", config=config)
 
 
@@ -605,7 +732,37 @@ def get_erd_data():
         abort(404, f"{filename} not found.")
 
     try:
-        payload = compute_epoch_erd(target_path, dataset_key, epoch_index, band_name)
+        hp = parse_optional_float_arg("hp")
+        lp = parse_optional_float_arg("lp")
+        notch_base = parse_optional_float_arg("notchBase")
+        notch_q = parse_optional_float_arg("notchQ")
+        n_harmonics = parse_optional_int_arg("notchHarmonics")
+        filter_order = parse_optional_int_arg("order")
+        baseline_samples_arg = parse_optional_int_arg("baselineSamples")
+    except ValueError as exc:
+        abort(400, str(exc))
+
+    filter_options = {
+        "hp": DEFAULT_FILTERS["hp"] if hp is None else hp,
+        "lp": DEFAULT_FILTERS["lp"] if lp is None else lp,
+        "notch_base": DEFAULT_FILTERS["notch_base"] if notch_base is None else notch_base,
+        "n_harmonics": DEFAULT_FILTERS["n_harmonics"] if n_harmonics is None else n_harmonics,
+        "notch_q": DEFAULT_FILTERS["notch_q"] if notch_q is None else notch_q,
+        "order": DEFAULT_FILTERS["order"] if filter_order is None else filter_order,
+    }
+    baseline_samples = (
+        DEFAULT_BASELINE_SAMPLES if baseline_samples_arg is None else baseline_samples_arg
+    )
+
+    try:
+        payload = compute_epoch_erd(
+            target_path,
+            dataset_key,
+            epoch_index,
+            band_name,
+            filter_options=filter_options,
+            baseline_samples=baseline_samples,
+        )
     except ValueError as exc:
         abort(400, str(exc))
     except Exception as exc:  # pragma: no cover - surfaced to client

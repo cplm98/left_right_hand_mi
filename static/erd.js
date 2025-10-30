@@ -9,6 +9,13 @@ const loadButton = document.getElementById("erd-load");
 const statusText = document.getElementById("erd-status");
 const plotEl = document.getElementById("erd-plot");
 const summaryEl = document.getElementById("erd-summary");
+const filterHpInput = document.getElementById("filter-hp");
+const filterLpInput = document.getElementById("filter-lp");
+const filterNotchBaseInput = document.getElementById("filter-notch-base");
+const filterNotchHarmonicsInput = document.getElementById("filter-notch-harmonics");
+const filterNotchQInput = document.getElementById("filter-notch-q");
+const filterOrderInput = document.getElementById("filter-order");
+const baselineSamplesInput = document.getElementById("baseline-samples");
 
 const datasetLookup = new Map(
   (window.ERD_CONFIG?.datasets || []).map((item) => [item.value, item.label]),
@@ -23,6 +30,112 @@ const state = {
 
 function clampEpoch(value) {
   return Math.max(0, Math.min(value, state.epochCount - 1));
+}
+
+function parseNumericInput(input, { integer = false } = {}) {
+  if (!input) {
+    return undefined;
+  }
+  const raw = input.value?.trim();
+  if (!raw) {
+    return undefined;
+  }
+  const value = integer ? Number.parseInt(raw, 10) : Number.parseFloat(raw);
+  if (!Number.isFinite(value)) {
+    console.warn("Ignoring non-numeric input", input.id, raw);
+    return undefined;
+  }
+  return value;
+}
+
+function getFilterParams() {
+  const params = {};
+  const hp = parseNumericInput(filterHpInput);
+  if (hp !== undefined) {
+    params.hp = hp;
+  }
+  const lp = parseNumericInput(filterLpInput);
+  if (lp !== undefined) {
+    params.lp = lp;
+  }
+  const notchBase = parseNumericInput(filterNotchBaseInput);
+  if (notchBase !== undefined) {
+    params.notchBase = notchBase;
+  }
+  const notchHarmonics = parseNumericInput(filterNotchHarmonicsInput, {
+    integer: true,
+  });
+  if (notchHarmonics !== undefined) {
+    params.notchHarmonics = notchHarmonics;
+  }
+  const notchQ = parseNumericInput(filterNotchQInput);
+  if (notchQ !== undefined) {
+    params.notchQ = notchQ;
+  }
+  const order = parseNumericInput(filterOrderInput, { integer: true });
+  if (order !== undefined) {
+    params.order = order;
+  }
+  const baselineSamples = parseNumericInput(baselineSamplesInput, {
+    integer: true,
+  });
+  if (baselineSamples !== undefined) {
+    params.baselineSamples = baselineSamples;
+  }
+  return params;
+}
+
+function syncFilterInputs(filters) {
+  if (!filters) {
+    return;
+  }
+  if (filterHpInput) {
+    filterHpInput.value =
+      filters.hp === null || filters.hp === undefined ? "" : filters.hp;
+  }
+  if (filterLpInput) {
+    filterLpInput.value =
+      filters.lp === null || filters.lp === undefined ? "" : filters.lp;
+  }
+  if (filterNotchBaseInput) {
+    filterNotchBaseInput.value =
+      filters.notchBase === null || filters.notchBase === undefined
+        ? ""
+        : filters.notchBase;
+  }
+  if (filterNotchHarmonicsInput) {
+    filterNotchHarmonicsInput.value =
+      filters.notchHarmonics === null || filters.notchHarmonics === undefined
+        ? ""
+        : filters.notchHarmonics;
+  }
+  if (filterNotchQInput) {
+    filterNotchQInput.value =
+      filters.notchQ === null || filters.notchQ === undefined
+        ? ""
+        : filters.notchQ;
+  }
+  if (filterOrderInput) {
+    filterOrderInput.value =
+      filters.order === null || filters.order === undefined ? "" : filters.order;
+  }
+  if (baselineSamplesInput && filters.baselineSamples !== undefined) {
+    baselineSamplesInput.value =
+      filters.baselineSamples === null ? "" : filters.baselineSamples;
+  }
+}
+
+function initializeFilterInputs() {
+  const defaults = window.ERD_CONFIG?.filters || {};
+  syncFilterInputs({
+    hp: defaults.hp,
+    lp: defaults.lp,
+    notchBase: defaults.notchBase,
+    notchHarmonics: defaults.notchHarmonics,
+    notchQ: defaults.notchQ,
+    order: defaults.order,
+    baselineSamples: defaults.baselineSamples,
+  });
 }
 
 function updateEpochControls(payload) {
@@ -47,13 +160,54 @@ function renderSummary(payload) {
   const datasetLabel = datasetLookup.get(payload.dataset) || payload.dataset;
   const bandLabel = payload.band?.replace("_band", "").toUpperCase();
 
-  const startTime = payload.movementWindow?.startTime ?? 0;
-  const endTime = payload.movementWindow?.endTime ?? 0;
-  const duration = Math.max(0, endTime - startTime);
+  const windows = payload.windows || {};
+  const baselineWindow = windows.baseline || {};
+  const activeWindow = windows.active || {};
+
+  const baselineStart = baselineWindow.startTime ?? 0;
+  const baselineEnd = baselineWindow.endTime ?? baselineStart;
+  const activeStart = activeWindow.startTime ?? 0;
+  const activeEnd = activeWindow.endTime ?? activeStart;
+
+  const baselineSamples = baselineWindow.samples ?? 0;
+  const activeSamples = activeWindow.samples ?? 0;
+
+  const baselineDuration =
+    baselineSamples && payload.sampleRate
+      ? `${baselineSamples} samples (${formatSeconds(
+          baselineSamples / payload.sampleRate,
+        )})`
+      : "n/a";
+  const activeDuration =
+    activeSamples && payload.sampleRate
+      ? `${activeSamples} samples (${formatSeconds(
+          activeSamples / payload.sampleRate,
+        )})`
+      : "n/a";
+
+  const filters = payload.filters || {};
+  const filterParts = [
+    filters.hp != null ? `HP ${filters.hp} Hz` : "HP off",
+    filters.lp != null ? `LP ${filters.lp} Hz` : "LP off",
+    filters.notchBase != null && filters.notchHarmonics
+      ? `Notch ${filters.notchBase} Hz ×${filters.notchHarmonics}`
+      : "Notch off",
+    filters.notchBase != null && filters.notchHarmonics
+      ? `Q ${filters.notchQ ?? "auto"}`
+      : "",
+    filters.order != null ? `Order ${filters.order}` : "",
+  ].filter(Boolean);
 
   summaryEl.innerHTML = `
     <p><strong>File:</strong> ${payload.file} · <strong>Condition:</strong> ${datasetLabel} · <strong>Band:</strong> ${bandLabel}</p>
-    <p><strong>Movement window:</strong> ${formatSeconds(startTime)} → ${formatSeconds(endTime)} (${formatSeconds(duration)}) · <strong>Samples per trial:</strong> ${payload.samplesPerTrial} @ ${payload.sampleRate} Hz</p>
+    <p><strong>Baseline:</strong> ${formatSeconds(baselineStart)} → ${formatSeconds(
+      baselineEnd,
+    )} (${baselineDuration}) · <strong>Active:</strong> ${formatSeconds(
+      activeStart,
+    )} → ${formatSeconds(activeEnd)} (${activeDuration}) · <strong>Samples per trial:</strong> ${
+    payload.samplesPerTrial
+  } @ ${payload.sampleRate} Hz</p>
+    <p><strong>Filters:</strong> ${filterParts.join(" · ")}</p>
   `;
 }
 
@@ -151,6 +305,7 @@ async function renderPlot(payload) {
       responsive: true,
       displaylogo: false,
     });
+    Plotly.Plots.resize(plotEl);
     console.warn("Rendering fallback scatter only.", {
       traces: plotEl.data?.length,
     });
@@ -164,16 +319,16 @@ async function renderPlot(payload) {
   const scatterHover = positions.map((position) => {
     const channel = channelLookup.get(position.index) || {};
     const erd = Number.isFinite(position.erd) ? position.erd : null;
-    const beforeVal = channel.before?.[payload.band];
-    const duringVal = channel.during?.[payload.band];
-    const beforeText = Number.isFinite(beforeVal)
-      ? Number(beforeVal).toFixed(4)
+    const baselineVal = channel.baseline?.[payload.band];
+    const activeVal = channel.active?.[payload.band];
+    const baselineText = Number.isFinite(baselineVal)
+      ? Number(baselineVal).toFixed(4)
       : "n/a";
-    const duringText = Number.isFinite(duringVal)
-      ? Number(duringVal).toFixed(4)
+    const activeText = Number.isFinite(activeVal)
+      ? Number(activeVal).toFixed(4)
       : "n/a";
     const erdText = erd === null ? "n/a" : erd.toFixed(4);
-    return `Ch ${position.index}<br>ERD: ${erdText}<br>Before: ${beforeText}<br>During: ${duringText}`;
+    return `Ch ${position.index}<br>ERD: ${erdText}<br>Baseline: ${baselineText}<br>Active: ${activeText}`;
   });
 
   const heatmapTrace = {
@@ -298,6 +453,12 @@ async function fetchErd(epochOverride) {
       band,
       epoch: String(epoch),
     });
+    const filterParams = getFilterParams();
+    Object.entries(filterParams).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== "") {
+        params.set(key, String(value));
+      }
+    });
     const response = await fetch(`/erd/data?${params.toString()}`);
     if (!response.ok) {
       const message = await response.text();
@@ -310,6 +471,15 @@ async function fetchErd(epochOverride) {
     }
     state.handledRequestId = requestId;
     console.log("ERD payload", payload);
+    syncFilterInputs({
+      hp: payload.filters?.hp ?? null,
+      lp: payload.filters?.lp ?? null,
+      notchBase: payload.filters?.notchBase ?? null,
+      notchHarmonics: payload.filters?.notchHarmonics ?? null,
+      notchQ: payload.filters?.notchQ ?? null,
+      order: payload.filters?.order ?? null,
+      baselineSamples: payload.baseline?.samples ?? null,
+    });
     updateEpochControls(payload);
     renderSummary(payload);
     await renderPlot(payload);
@@ -381,4 +551,5 @@ if (nextButton) {
 }
 
 // Initial load
+initializeFilterInputs();
 fetchErd();

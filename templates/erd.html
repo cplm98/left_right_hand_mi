@@ -41,6 +41,37 @@
         <button id="erd-load" type="button">Load</button>
         <p id="erd-status" role="status"></p>
       </section>
+      <section class="filter-controls" aria-label="Filtering options">
+        <div class="filter-group">
+          <label for="filter-hp">High-pass (Hz)</label>
+          <input type="number" step="0.1" id="filter-hp" value="{{ config['filters']['hp'] }}">
+        </div>
+        <div class="filter-group">
+          <label for="filter-lp">Low-pass (Hz)</label>
+          <input type="number" step="0.1" id="filter-lp" value="{{ config['filters']['lp'] }}">
+        </div>
+        <div class="filter-group">
+          <label for="filter-notch-base">Notch base (Hz)</label>
+          <input type="number" step="0.1" id="filter-notch-base" value="{{ config['filters']['notchBase'] }}">
+        </div>
+        <div class="filter-group">
+          <label for="filter-notch-harmonics">Notch harmonics</label>
+          <input type="number" step="1" id="filter-notch-harmonics" value="{{ config['filters']['notchHarmonics'] }}">
+        </div>
+        <div class="filter-group">
+          <label for="filter-notch-q">Notch Q</label>
+          <input type="number" step="1" id="filter-notch-q" value="{{ config['filters']['notchQ'] }}">
+        </div>
+        <div class="filter-group">
+          <label for="filter-order">Filter order</label>
+          <input type="number" step="1" id="filter-order" value="{{ config['filters']['order'] }}">
+        </div>
+        <div class="filter-group">
+          <label for="baseline-samples">Baseline samples</label>
+          <input type="number" step="1" id="baseline-samples" value="{{ config['filters']['baselineSamples'] }}">
+        </div>
+        <p class="filter-note">Leave a field blank to use defaults. Enter 0 to disable a specific filter stage.</p>
+      </section>
       <section id="erd-summary" class="erd-summary"></section>
       <div class="erd-layout">
         <div id="erd-plot" class="erd-plot" aria-label="ERD chart"></div>
